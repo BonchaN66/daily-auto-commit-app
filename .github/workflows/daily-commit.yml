@@ -2,12 +2,21 @@ name: Daily Auto Commit
 
 on:
   schedule:
-    # 21:00 JST = 12:00 UTC
-    - cron: "0 12 * * *"
+    # JST 09:00 / 12:00 / 15:00 / 18:00 / 21:00 (UTC 00:00 / 03:00 / 06:00 / 09:00 / 12:00)
+    # daily モードでは 21:00 JST (UTC 12:00) の回だけがコミットする。
+    # random モードでは全ての回が抽選対象になる。
+    - cron: "0 0,3,6,9,12 * * *"
   workflow_dispatch: {}
 
 permissions:
   contents: write
+
+env:
+  # "daily"  : 1日1回、決まった時刻(UTC 12:00 = JST 21:00)にコミット
+  # "random" : 上記5つの起動タイミングそれぞれで RANDOM_COMMIT_PROBABILITY の確率でコミット
+  COMMIT_MODE: daily
+  RANDOM_COMMIT_PROBABILITY: 40 # random モード時の1回あたりのコミット確率(%)
+  DAILY_RUN_HOUR_UTC: "12"
 
 jobs:
   commit:
@@ -20,12 +29,45 @@ jobs:
           git config user.name "BonchaN66"
           git config user.email "BonchaN66@users.noreply.github.com"
 
-      - name: Append daily log entry
+      - name: Decide whether to commit this run
+        id: decide
         run: |
-          echo "$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> data/log.txt
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "should_commit=true" >> "$GITHUB_OUTPUT"
+            echo "Manual trigger: always commit."
+            exit 0
+          fi
+
+          if [ "$COMMIT_MODE" = "daily" ]; then
+            HOUR_UTC=$(date -u +'%H')
+            if [ "$HOUR_UTC" = "$DAILY_RUN_HOUR_UTC" ]; then
+              echo "should_commit=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "should_commit=false" >> "$GITHUB_OUTPUT"
+              echo "daily mode: not the designated hour ($HOUR_UTC != $DAILY_RUN_HOUR_UTC), skipping."
+            fi
+          elif [ "$COMMIT_MODE" = "random" ]; then
+            ROLL=$((RANDOM % 100))
+            if [ "$ROLL" -lt "$RANDOM_COMMIT_PROBABILITY" ]; then
+              echo "should_commit=true" >> "$GITHUB_OUTPUT"
+              echo "random mode: roll $ROLL < $RANDOM_COMMIT_PROBABILITY, committing."
+            else
+              echo "should_commit=false" >> "$GITHUB_OUTPUT"
+              echo "random mode: roll $ROLL >= $RANDOM_COMMIT_PROBABILITY, skipping."
+            fi
+          else
+            echo "Unknown COMMIT_MODE: $COMMIT_MODE" >&2
+            exit 1
+          fi
+
+      - name: Append log entry
+        if: steps.decide.outputs.should_commit == 'true'
+        run: |
+          echo "$(date -u +'%Y-%m-%d %H:%M:%S UTC') mode=$COMMIT_MODE" >> data/log.txt
 
       - name: Commit and push
+        if: steps.decide.outputs.should_commit == 'true'
         run: |
           git add data/log.txt
-          git commit -m "chore: daily update $(date -u +'%Y-%m-%d')"
+          git commit -m "chore: update $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
           git push
