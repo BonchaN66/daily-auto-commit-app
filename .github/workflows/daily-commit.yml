@@ -1,0 +1,31 @@
+name: Daily Auto Commit
+
+on:
+  schedule:
+    # 21:00 JST = 12:00 UTC
+    - cron: "0 12 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git
+        run: |
+          git config user.name "BonchaN66"
+          git config user.email "BonchaN66@users.noreply.github.com"
+
+      - name: Append daily log entry
+        run: |
+          echo "$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> data/log.txt
+
+      - name: Commit and push
+        run: |
+          git add data/log.txt
+          git commit -m "chore: daily update $(date -u +'%Y-%m-%d')"
+          git push
